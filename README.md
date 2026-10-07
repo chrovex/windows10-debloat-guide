@@ -40,7 +40,7 @@ winget install -e --id Microsoft.OSCDIMG
 Recommend to turn off antivirus software to accelerate the process, do at your own risk.
 You need run cmd as administrators.
 
-Copy `dvd\sources\install.wim` to USERDIR.
+Copy `install.wim` and `boot.wim` in `dvd\sources` to USERDIR.
 
 # Stage 1 - Offline Tweaks
 
@@ -583,7 +583,7 @@ dism /Export-Image /SourceImageFile:%WORKDIR%\output\install_%VERSION%.wim /Sour
 
 Remove all files in dvd. Extract `dvd_structure.zip` to dvd.
 
-Rename and copy `install.esd` or `install.wim` to `dvd\sources`.
+Rename and copy `install.esd` or `install.wim` to `dvd\sources`. Copy `boot.wim` to `dvd\sources`.
 
 Make installation DVD:
 ```
