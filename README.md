@@ -38,6 +38,7 @@ winget install -e --id Microsoft.OSCDIMG
 
 ## Preparation
 Recommend to turn off antivirus software to accelerate the process, do at your own risk.
+You need run cmd as administrators.
 
 Copy `dvd\sources\install.wim` to USERDIR.
 
@@ -278,7 +279,7 @@ dism /Get-WimInfo /WimFile:%USERDIR%\install_stage.wim
 # Stage 2 - Customization in Audit Mode
 
 ## Setup VM and BOOT in Audit Mode
-Create VM with 35Gb vhdx,  using diskpart to create EFI and SYSTEM partition, assign SYSTEM partition to V:.
+Create VM with 35Gb vhdx, using diskpart to create EFI and SYSTEM partition, assign SYSTEM partition to V:.
 
 Apply stage wimfile to vhdx:
 ```
@@ -307,7 +308,11 @@ dism /Online /Get-ReservedStorageState
 
 Remove Edge and OneDrive, but not Edge WebView:
 
-- Indentify services from `sc query type=all | findstr /i "Edge"` and `sc query type=all | findstr /i "OneDrive"` manually, use `sc stop <servicename>` and `sc delete <servicename>` to clean 
+- Indentify services from `sc query type=all | findstr /i "Edge"` and `sc query type=all | findstr /i "OneDrive"` manually, use `sc stop <servicename>` and `sc delete <servicename>` to clean
+```
+sc delete edgeupdate
+sc delete edgeupdatem
+```
 
 - Delete scheduled tasks from `schtasks /query /fo LIST | findstr /i "Edge"` and `schtasks /query /fo LIST | findstr /i "OneDrive"`
 
@@ -317,7 +322,7 @@ HKCR\Applications\msedge.exe
 HKCR\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}
 HKCR\microsoft-edge
 HKCR\microsoft-edge-holographic
-HKCR\msedge
+HKCR\msedge*
 
 HKLM\SOFTWARE\Microsoft\Edge
 HKLM\SOFTWARE\Microsoft\EdgeUpdate
@@ -573,7 +578,7 @@ dism /Get-WimInfo /WimFile:%WORKDIR%\output\install_%VERSION%.wim
 ## Make Installation DVD
 Export ESD:
 ```
-dism /Export-Image /SourceImageFile:%WORKDIR%\output\install_%VERSION%.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\output\install.esd /Compress:recovery /CheckIntegrity
+dism /Export-Image /SourceImageFile:%WORKDIR%\output\install_%VERSION%.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\output\install_%VERSION%.esd /Compress:recovery /CheckIntegrity
 ```
 
 Remove all files in dvd. Extract `dvd_structure.zip` to dvd.
