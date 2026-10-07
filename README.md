@@ -1,331 +1,247 @@
-# Windows 10 — Customized Build Guide
+# Stage 0 - Prerequisites
 
-> **Personal Windows 10 22H2 image-customization notes**  
-> Offline servicing → Audit Mode customization → final cleanup → WIM/ESD/ISO
+## Disclaimer
+This README is a note rather than a script for my process Windows 10 optimization. The codes should be treated
+as reminders. Most time manual action is needed, so please DO NOT directly paste-and-run. `*` should NOT be 
+treated as wildcard, it just mentioned you to check the result or files under directory. For the debloat parts,
+you need to think and chooce wisely. Make sure you understand before press enter. I am not responsible for the
+outcome. Do not use these on your production devices. 
 
-![Windows 10](https://img.shields.io/badge/Windows%2010-22H2-blue?logo=windows)
-![Architecture](https://img.shields.io/badge/Architecture-x64-lightgrey)
-![Build](https://img.shields.io/badge/Reference%20build-2026-informational)
-
-This repository records a repeatable process for building a **lean, customized Windows 10 22H2 x64 reference image**. The workflow is intentionally split into offline servicing, online Audit Mode customization, and final offline cleanup so that each stage can be inspected independently.
-
-### 🎯 Design goals
-
-- Keep the Windows 10 base system lean without turning the process into a blind debloat script.
-- Add **Simplified Chinese fonts and Microsoft Pinyin** while retaining English as the Windows display language.
-- Remove selected optional components, provisioned AppX packages, services, scheduled tasks, and bundled payloads according to personal requirements.
-- Produce both a deployment-friendly `install.wim` and a compressed `install.esd` for installation media.
-- Refresh the reference image **annually**; the current build is the **2026** image.
-
-### 🧭 Workflow
-
-```text
-Source ISO / FOD / drivers
-          │
-          ▼
-Stage 1 — Offline customization
-          │
-          ├─ WinRE fonts
-          ├─ CJK fonts + Pinyin
-          ├─ drivers
-          ├─ curated feature/capability/AppX/package changes
-          ├─ payload cleanup
-          └─ Audit-mode unattend
-          │
-          ▼
-Stage WIM → Audit Mode VHDX
-          │
-          ▼
-Stage 2 — Online customization
-          │
-          ├─ Reserved Storage
-          ├─ Edge / OneDrive cleanup
-          ├─ privacy policies
-          ├─ services / scheduled tasks
-          ├─ CompactOS
-          └─ Sysprep
-          │
-          ▼
-Stage 3 — Final offline cleanup
-          │
-          ├─ component-store cleanup
-          ├─ build-artifact cleanup
-          ├─ boot optimization
-          └─ capture final WIM
-          │
-          ├──────────────┐
-          ▼              ▼
-       install.wim   install.esd
-          │              │
-          └───────┬──────┘
-                  ▼
-             Bootable ISO
-```
-
-> **Note:** This document intentionally favors transparency and manual review over full automation. The resulting image should be tested in a VM before use on physical hardware.
-
-## 📑 Contents
-
-1. [Offline customization](#stage-1--offline-customization)
-2. [Audit Mode customization](#stage-2--online-customization-in-audit-mode)
-3. [Final cleanup and installation media](#stage-3--final-cleanup-and-installation-media)
-4. [Post-installation](#post-installation)
-5. [Final validation](#-final-validation-checklist)
-6. [Annual image refresh](#-annual-image-refresh)
-
-
-## ⚠️ Disclaimer
-
-This repository documents a **personal Windows 10 optimization and image-customization workflow**. It is a set of notes and reminders, **not a fully automated script**.
-
-> **Do not paste-and-run the commands blindly.**  
-> Most steps require manual inspection and judgment before proceeding.
-
-A few conventions used throughout this document:
-
-- `*` in a path is **not** intended to indicate a shell wildcard command. It means "inspect matching files/items under this location" before deciding what to remove.
-- Debloat operations are intentionally **manual and curated**. Review each item and understand its purpose before removing or disabling it.
-- This workflow is designed for a **non-production, personal/reference image**. Validate the resulting image in a VM before deploying it to real hardware.
-- Commands may need to be adjusted for your edition, source media, architecture, mounted drive letters, and servicing baseline.
-
-**Use at your own risk. No warranty is provided.**
-
-## 📌 Build Variables
-
-Pre-defined working directories:
-
+## Variables
+Change this:
 ```
 set "WORKDIR=D:\win10\work"
-set "MOUNTDIR=D:\win10\mount"
-set "RE_MOUNTDIR=D:\win10\remount"
-set "OUTPUT=%WORKDIR%\output"
-set "IMAGEYEAR=2026"
+set "VERSION=OSCurrent202610"
 ```
 
-## 📦 Source Media & Prerequisites
-**Windows 10 22H2 (19045) Feature Update ISO**  
-[UUP dump — Windows 10 22H2](https://uupdump.net/known.php?q=category:w10-22h2)
-
-**Windows 10 Language Pack / Features on Demand media**  
-[Microsoft — Language packs and Features on Demand](https://learn.microsoft.com/en-us/azure/virtual-desktop/language-packs)
-
-**Intel Wi-Fi AX210 drivers**  
-[Intel — Wi-Fi 6E AX210 downloads](https://www.intel.com/content/www/us/en/products/sku/204836/intel-wifi-6e-ax210-gig/downloads.html)
-
-| Item | Purpose |
-|---|---|
-| Windows 10 22H2 ISO | Base installation source |
-| Windows 10 Language Pack / FOD media | CJK language capabilities and fonts |
-| Intel AX200/AX210 driver package | Offline network driver integration |
-
-> Keep the Windows source, FOD/language media, and drivers matched to the intended architecture and servicing baseline.
-
-# Stage 1 — Offline Customization
-
-## 1. Mount the Installation WIM
-
-Identify the target edition/index before servicing the image.
-
-### List available indexes
+Pre-defined variables:
 ```
-dism /Get-WimInfo /WimFile:%WORKDIR%\install.wim
+set "USERDIR=%WORKDIR%\user"
+set "INSTALL_MOUNTDIR=%WORKDIR%\mount\install"
+set "RE_MOUNTDIR=%WORKDIR%\mount\winre"
 ```
 
-### Check WIM integrity
+## Source Readiness
+Windows 10 22H2 (19045) Feature update ISO:
+https://uupdump.net/known.php?q=category:w10-22h2
+
+Windows 10 Langpack and FoD DVD:
+https://learn.microsoft.com/en-us/azure/virtual-desktop/language-packs
+
+Intel WiFi AX210 Drivers:
+https://www.intel.com/content/www/us/en/products/sku/204836/intel-wifi-6e-ax210-gig/downloads.html
+
+Oscdimg:
 ```
-dism /Check-Integrity /WimFile:%WORKDIR%\install.wim
+winget install -e --id Microsoft.OSCDIMG
 ```
 
-### Mount the source WIM
+## Preparation
+Recommend to turn off antivirus software to accelerate the process, do at your own risk.
+
+Copy `dvd\sources\install.wim` to USERDIR.
+
+# Stage 1 - Offline Tweaks
+
+## Mount Wim
+List all indexes:
 ```
-dism /Mount-Wim /WimFile:%WORKDIR%\install.wim /Index:1 /MountDir:%MOUNTDIR%
+dism /Get-WimInfo /WimFile:%USERDIR%\install.wim
+```
+
+Mount wimfile:
+```
+dism /Mount-Image /ImageFile:%USERDIR%\install.wim /Index:1 /MountDir:%INSTALL_MOUNTDIR%
 dism /Get-MountedWimInfo
 ```
 
-## 2. Rebuild WinRE
-Copy `%MOUNTDIR%\Windows\System32\Recovery\winre.wim` to `%WORKDIR%`.
+## WinRE Rebuild
+Copy `%INSTALL_MOUNTDIR%\Windows\System32\Recovery\winre.wim` to USERDIR.
 
-### Mount WinRE
+Mount WinRE wimfile:
 ```
-dism /Get-WimInfo /WimFile:%WORKDIR%\winre.wim
-dism /Mount-Wim /WimFile:%WORKDIR%\winre.wim /Index:1 /MountDir:%RE_MOUNTDIR%
+dism /Get-WimInfo /WimFile:%USERDIR%\winre.wim
+dism /Mount-Image /ImageFile:%USERDIR%\winre.wim /Index:1 /MountDir:%RE_MOUNTDIR%
 dism /Get-MountedWimInfo
 ```
 
-### Add Simplified Chinese font support
+Add fonts:
 ```
-dism /Image:%RE_MOUNTDIR% /Add-Package /PackagePath:%WORKDIR%\re\WinPE-FontSupport-ZH-CN.cab /LimitAccess
+dism /Image:%RE_MOUNTDIR% /Add-Package /PackagePath:%WORKDIR%\integrate\winre\WinPE-FontSupport-ZH-CN.cab
 dism /Image:%RE_MOUNTDIR% /Get-Packages | findstr /i "FontSupport"
 ```
 
-### Cleanup, commit, and export
+Cleanup, commit changes and export:
 ```
 dism /Image:%RE_MOUNTDIR% /Cleanup-Image /StartComponentCleanup /Resetbase
 dism /Unmount-Image /MountDir:%RE_MOUNTDIR% /Commit
-dism /Export-Image /SourceImageFile:%WORKDIR%\winre.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\winre_rebuild.wim /Compress:max /CheckIntegrity
+dism /Export-Image /SourceImageFile:%USERDIR%\winre.wim /SourceIndex:1 /DestinationImageFile:%USERDIR%\winre_rebuild.wim /Compress:max /CheckIntegrity
 ```
 
-Copy `winre_rebuild.wim` to `%MOUNTDIR%\Windows\System32\Recovery\winre.wim`.
+Copy `%USERDIR%\winre_rebuild.wim` to `%INSTALL_MOUNTDIR%\Windows\System32\Recovery\winre.wim`.
 
-## 3. Integrate CJK Fonts and Microsoft Pinyin IME
-Add **Chinese basic typing support** and **Simplified Chinese/Han fonts**. This does **not** install the Chinese display language, OCR, handwriting, or text-to-speech components.
+## Integrate CJK Fonts and Pinyin IME
+Add Chinese support (not display language; no OCR, handwriting or TTS) and fonts:
 ```
-dism /Image:%MOUNTDIR% /Add-Capability /CapabilityName:Language.Basic~~~zh-CN~0.0.1.0 /Source:%WORKDIR%\lang /LimitAccess
-dism /Image:%MOUNTDIR% /Add-Capability /CapabilityName:Language.Fonts.Hans~~~und-HANS~0.0.1.0 /Source:%WORKDIR%\lang /LimitAccess
-```
-
-### Verify language capabilities
-```
-dism /Image:"%MOUNTDIR%" /Get-Capabilities | findstr /i "Language"
-dism /Image:"%MOUNTDIR%" /Get-CapabilityInfo /CapabilityName:Language.Basic~~~zh-CN~0.0.1.0
+dism /Image:%INSTALL_MOUNTDIR% /Add-Capability /CapabilityName:Language.Basic~~~zh-CN~0.0.1.0 /Source:%WORKDIR%\integrate\lang /LimitAccess
+dism /Image:%INSTALL_MOUNTDIR% /Add-Capability /CapabilityName:Language.Fonts.Hans~~~und-HANS~0.0.1.0 /Source:%WORKDIR%\integrate\lang /LimitAccess
 ```
 
-## 4. Integrate Drivers
-### Add Intel AX200/AX210 drivers
+Check language support capabilities:
 ```
-dism /Image:%MOUNTDIR% /Add-Driver /Driver:%WORKDIR%\drivers\Netwtw08.INF
-```
-
-### Verify installed drivers
-```
-dism /Image:%MOUNTDIR% /Get-Drivers
+dism /Image:"%INSTALL_MOUNTDIR%" /Get-Capabilities | findstr /i "Language"
+dism /Image:"%INSTALL_MOUNTDIR%" /Get-CapabilityInfo /CapabilityName:Language.Basic~~~zh-CN~0.0.1.0
 ```
 
-## 5. Disable Optional Windows Features
-
-Export the current feature inventory, review it manually, and create a curated list of features to disable.
-
-### Export the feature inventory
+## Integrate Drivers
+Add Intel AX200/AX210 drivers:
 ```
-dism /Image:%MOUNTDIR% /Get-Features /Format:Table > %WORKDIR%\feature_remove.txt
+dism /Image:%INSTALL_MOUNTDIR% /Add-Driver /Driver:%WORKDIR%\integrate\driver\Netwtw08.INF
 ```
 
-> **Manual step:** Curate the disable list before continuing. Keep **one feature name per line**.
-
-### Disable selected features
+Check driver information:
 ```
-for /f "usebackq delims=" %%P in ("%WORKDIR%\feature_remove.txt") do (dism /Image:%MOUNTDIR% /Disable-Feature /FeatureName:%%P /Remove)
+dism /Image:%INSTALL_MOUNTDIR% /Get-Drivers
 ```
 
-### Verify feature state
+## Disable Features
+Generate list with all features:
 ```
-dism /Image:%MOUNTDIR% /Get-Features /Format:Table
-```
-
-## 6. Remove Optional Capabilities
-
-Export the current capability inventory, review it manually, and create a curated removal list.
-
-### Export the capability inventory
-```
-dism /Image:%MOUNTDIR% /Get-Capabilities /Format:Table > %WORKDIR%\cap_remove.txt
+dism /Image:%INSTALL_MOUNTDIR% /Get-Features | findstr /B /C:"Feature Name :" > %USERDIR%\feature_remove.txt
 ```
 
-> **Manual step:** Curate the removal list before continuing. Keep **one capability name per line**.
-
-### Remove selected capabilities
+(Important!) Manually delete the `Feature Name : ` prefix, curate disable items before continue. Status can be check using:
 ```
-for /f "usebackq delims=" %%P in ("%WORKDIR%\cap_remove.txt") do (dism /Image:%MOUNTDIR% /Remove-Capability /CapabilityName:%%P)
+dism /Image:%INSTALL_MOUNTDIR% /Get-Features /Format:Table
 ```
 
-### Verify capability state
+Disable features:
 ```
-dism /Image:%MOUNTDIR% /Get-Capabilities /Format:Table
-```
-
-## 7. Remove Provisioned AppX Packages
-
-Export the current provisioned-AppX inventory, review it manually, and create a curated removal list.
-
-### Export the AppX inventory
-```
-dism /Image:%MOUNTDIR% /Get-ProvisionedAppxPackages > %WORKDIR%\appx_remove.txt
+for /f "usebackq delims=" %P in ("%USERDIR%\feature_remove.txt") do (dism /Image:%INSTALL_MOUNTDIR% /Disable-Feature /FeatureName:%P /Remove)
 ```
 
-> **Manual step:** Curate the removal list before continuing. Keep **one AppX package name per line**.
-
-### Remove selected AppX packages
+Check features information:
 ```
-for /f "usebackq delims=" %%P in ("%WORKDIR%\appx_remove.txt") do (dism /Image:%MOUNTDIR% /Remove-ProvisionedAppxPackage /PackageName:%%P)
+dism /Image:%INSTALL_MOUNTDIR% /Get-Features /Format:Table
 ```
 
-### Verify provisioned AppX packages
+## Remove Capabilities
+Generate list with all capabilities:
 ```
-dism /Image:%MOUNTDIR% /Get-ProvisionedAppxPackages
-```
-
-### Optimize provisioned AppX packages
-```
-dism /Image:%MOUNTDIR% /Optimize-ProvisionedAppxPackages
+dism /Image:%INSTALL_MOUNTDIR% /Get-Capabilities | findstr /B /C:"Capability Identity :" > %USERDIR%\cap_remove.txt
 ```
 
-## 8. Commit Changes and Remount
+(Important!) Manually delete the `Capability Identity :` prefix, curate removal items before continue. Status can be check using:
 ```
-dism /Unmount-Image /MountDir:%MOUNTDIR% /Commit
-dism /Mount-Wim /WimFile:%WORKDIR%\install.wim /Index:1 /MountDir:%MOUNTDIR%
+dism /Image:%INSTALL_MOUNTDIR% /Get-Capabilities /Format:Table
+```
+
+Remove capabilities:
+```
+for /f "usebackq delims=" %P in ("%USERDIR%\cap_remove.txt") do (dism /Image:%INSTALL_MOUNTDIR% /Remove-Capability /CapabilityName:%P)
+```
+
+Check capabilities information:
+```
+dism /Image:%INSTALL_MOUNTDIR% /Get-Capabilities /Format:Table
+```
+
+## Remove Provisioned AppX
+Generate list with all appx:
+```
+dism /Image:%INSTALL_MOUNTDIR% /Get-ProvisionedAppxPackages | findstr /B /C:"PackageName :" > %USERDIR%\appx_remove.txt
+```
+
+(Important!) Manually delete the `PackageName :` prefix, curate removal items before continue. Status can be check using:
+```
+dism /Image:%INSTALL_MOUNTDIR% /Get-ProvisionedAppxPackages
+```
+
+Remove appx:
+```
+for /f "usebackq delims=" %P in ("%USERDIR%\appx_remove.txt") do (dism /Image:%INSTALL_MOUNTDIR% /Remove-ProvisionedAppxPackage /PackageName:%P)
+```
+
+Check appx information:
+```
+dism /Image:%INSTALL_MOUNTDIR% /Get-ProvisionedAppxPackages
+```
+
+Optimize appx:
+```
+dism /Image:%INSTALL_MOUNTDIR% /Optimize-ProvisionedAppxPackages
+```
+
+## Commit Changes and Remount
+```
+dism /Unmount-Image /MountDir:%INSTALL_MOUNTDIR% /Commit
+dism /Mount-Image /ImageFile:%USERDIR%\install.wim /Index:1 /MountDir:%INSTALL_MOUNTDIR%
 dism /Get-MountedWimInfo
 ```
 
-## 9. Remove Servicing Packages
-
-Export the visible package inventory and remove only packages that you have explicitly reviewed.
-
-### Export the package inventory
+## Remove Packages
+List all visible packages:
 ```
-dism /Image:%MOUNTDIR% /Get-Packages /Format:Table > %WORKDIR%\package_remove.txt
+dism /Image:%INSTALL_MOUNTDIR% /Get-Packages | findstr /B /C:"Package Identity :" > %USERDIR%\package_remove.txt
 ```
 
-> **Manual step:** Curate the removal list before continuing. Keep **one package name per line**.
-
-### Remove selected packages
+(Important!) Manually delete the `Package Identity :` prefix, curate removal items before continue. Status can be check using:
 ```
-for /f "usebackq delims=" %%P in ("%WORKDIR%\package_remove.txt") do (dism /Image:%MOUNTDIR% /Remove-Package /PackageName:%%P)
+dism /Image:%INSTALL_MOUNTDIR% /Get-Packages /Format:Table
 ```
 
-### Verify installed packages
+Remove package:
 ```
-dism /Image:%MOUNTDIR% /Get-Packages /Format:Table
-```
-
-## 10. Remove Other Payloads
-### Microsoft Edge payloads
-
-> **WebView2 is intentionally not removed.** Edge/WebView-related components should be evaluated separately from the browser itself.
-```
-%MOUNTDIR%\ProgramData\Microsoft\EdgeUpdate
-%MOUNTDIR%\WindowsApps\Microsoft.MicrosoftEdge*
-%MOUNTDIR%\Program Files\WindowsApps\Microsoft.MicrosoftEdge*
-%MOUNTDIR%\Program Files (x86)\Microsoft\Edge\
-%MOUNTDIR%\Program Files (x86)\Microsoft\EdgeUpdate\
-%MOUNTDIR%\Program Files (x86)\Microsoft\Temp\
-%MOUNTDIR%\Windows\SystemApps\Microsoft.MicrosoftEdge*
-%MOUNTDIR%\Windows\System32\MicrosoftEdge*
+for /f "usebackq delims=" %P in ("%USERDIR%\package_remove.txt") do (dism /Image:%INSTALL_MOUNTDIR% /Remove-Package /PackageName:%P)
 ```
 
-### OneDrive payloads
+Check packages information:
 ```
-%MOUNTDIR%\Windows\System32\OneDriveSetup.exe
-%MOUNTDIR%\Windows\SysWOW64\OneDriveSetup.exe
-```
-
-### Wallpapers, lock screen, and themes
-```
-%MOUNTDIR%\Windows\Web\Wallpaper
-%MOUNTDIR%\Windows\Web\Screen
-%MOUNTDIR%\Windows\Resources\Themes
+dism /Image:%INSTALL_MOUNTDIR% /Get-Packages /Format:Table
 ```
 
-### Sample media and Retail Demo content
+## Remove Other Payloads
+Edge and related files:
 ```
-%MOUNTDIR%\Users\Public\Pictures
-%MOUNTDIR%\Users\Public\Music
-%MOUNTDIR%\Users\Public\Videos
-%MOUNTDIR%\Users\Public\Documents
-%MOUNTDIR%\Windows\RetailDemo
+%INSTALL_MOUNTDIR%\Program Files (x86)\Microsoft\Edge\
+%INSTALL_MOUNTDIR%\Program Files (x86)\Microsoft\EdgeUpdate\
+%INSTALL_MOUNTDIR%\Program Files (x86)\Microsoft\Temp\
+%INSTALL_MOUNTDIR%\Program Files\WindowsApps\Microsoft.MicrosoftEdge*
+%INSTALL_MOUNTDIR%\ProgramData\Microsoft\EdgeUpdate
+%INSTALL_MOUNTDIR%\Windows\System32\MicrosoftEdge*
+%INSTALL_MOUNTDIR%\Windows\SystemApps\Microsoft.MicrosoftEdge*
+%INSTALL_MOUNTDIR%\WindowsApps\Microsoft.MicrosoftEdge*
 ```
 
-## 11. Inject Audit-Mode Unattend
-Create `Unattend.xml in `%MOUNTDIR%\Windows\Panther\Unattend`:
+OneDrive and related files:
+```
+%INSTALL_MOUNTDIR%\Windows\System32\OneDriveSetup.exe
+%INSTALL_MOUNTDIR%\Windows\SysWOW64\OneDriveSetup.exe
+```
+
+Wallpapers，lockscreen and themes:
+```
+%INSTALL_MOUNTDIR%\Windows\Resources\Themes
+%INSTALL_MOUNTDIR%\Windows\Web\Screen
+%INSTALL_MOUNTDIR%\Windows\Web\Wallpaper
+```
+
+Sample media:
+```
+%INSTALL_MOUNTDIR%\Users\Public\Documents
+%INSTALL_MOUNTDIR%\Users\Public\Music
+%INSTALL_MOUNTDIR%\Users\Public\Pictures
+%INSTALL_MOUNTDIR%\Users\Public\Videos
+%INSTALL_MOUNTDIR%\Windows\RetailDemo
+```
+
+Misc:
+```
+%INSTALL_MOUNTDIR%\inetpub
+```
+
+## Inject Audit Unattend
+Create `Unattend.xml` in `%INSTALL_MOUNTDIR%\Windows\Panther\Unattend`:
 ```
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -343,106 +259,99 @@ Create `Unattend.xml in `%MOUNTDIR%\Windows\Panther\Unattend`:
 </unattend>
 ```
 
-## 12. Commit and Export the Stage WIM
-### Commit and unmount
-```
-dism /Unmount-Image /MountDir:%MOUNTDIR% /Commit
-```
-
-### Export the stage WIM
-```
-dism /Get-WimInfo /WimFile:%WORKDIR%\install.wim
-dism /Export-Image /SourceImageFile:%WORKDIR%\install.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\install_stage.wim /Compress:max /CheckIntegrity
-dism /Get-WimInfo /WimFile:%WORKDIR%\install_stage.wim
-```
+Copy this readme.md itself to `%INSTALL_MOUNTDIR%\Windows\Panther` for VM paste convenience.
 
 
-# Stage 2 — Online Customization in Audit Mode
-
-## 13. Prepare the VM and Boot into Audit Mode
-Create a VM with a **30 GB VHDX**. Use DiskPart to create an EFI System Partition and a Windows/system partition, then assign the Windows partition to `V:`.
-
-### Apply the stage WIM to the VHDX
+## Commit Changes and Export Wimfile
+Commit changes and unmount:
 ```
-dism /Apply-Image /ImageFile:%WORKDIR%\install_stage.wim /Index:1 /ApplyDir:V:\
+dism /Unmount-Image /MountDir:%INSTALL_MOUNTDIR% /Commit
+```
+
+Export stage wimfile:
+```
+dism /Export-Image /SourceImageFile:%USERDIR%\install.wim /SourceIndex:1 /DestinationImageFile:%USERDIR%\install_stage.wim /Compress:max /CheckIntegrity
+dism /Get-WimInfo /WimFile:%USERDIR%\install_stage.wim
+```
+
+
+# Stage 2 - Customization in Audit Mode
+
+## Setup VM and BOOT in Audit Mode
+Create VM with 35Gb vhdx,  using diskpart to create EFI and SYSTEM partition, assign SYSTEM partition to V:.
+
+Apply stage wimfile to vhdx:
+```
+dism /Apply-Image /ImageFile:%USERDIR%\install_stage.wim /Index:1 /ApplyDir:V:\
 dism /Image:V: /Optimize-Image /Boot
 ```
 
-### Detach and boot into WinRE
+Unattach vhdx.
 
-Boot the VM from the original installation media into WinRE and assign the EFI partition to `S:`.
+Boot VM with original installation media to WinRE, assign EFI partition to S:.
 
-Make the VHDX bootable; assume `C:` is the Windows/system partition.
+Make vhdx bootable, suppose V: for SYSTEM partition:
 ```
-bcdboot C:\Windows /s S: /f UEFI
+V:\Windows\System32\bcdboot V:\Windows /s S: /f UEFI
 ```
 
-Reboot the VM. Windows should enter **Audit Mode** and complete any pending CBS servicing operations.
+Reboot VM, and it will enter audit mode to complete CBS pending process.
 
-## 14. Online Tweaks
-### Disable Reserved Storage
+## Online Tweaks
+Disable reserved storage:
 ```
 dism /Online /Get-ReservedStorageState
 dism /Online /Set-ReservedStorageState /State:Disabled
 dism /Online /Get-ReservedStorageState
 ```
 
-### Edge and OneDrive cleanup
+Remove Edge and OneDrive, but not Edge WebView:
 
-Edge and OneDrive are intentionally removed from the base image. **Edge WebView is not removed.** If Edge, OneDrive, or WebView2 is later required, reinstall the corresponding component manually.
+- Indentify services from `sc query type=all | findstr /i "Edge"` and `sc query type=all | findstr /i "OneDrive"` manually, use `sc stop <servicename>` and `sc delete <servicename>` to clean 
 
-- Identify the relevant services from `sc query | findstr /i "Edge"` and `sc query type= all | findstr /i "OneDrive"` manually, then stop/delete only the services selected for removal. These registrations may return when Edge or OneDrive is installed again.
+- Delete scheduled tasks from `schtasks /query /fo LIST | findstr /i "Edge"` and `schtasks /query /fo LIST | findstr /i "OneDrive"`
 
-- Review and delete the relevant scheduled tasks using `schtasks /query /fo LIST | findstr /i "Edge"` and `schtasks /query /fo LIST | findstr /i "OneDrive"`.
-
-- Clean the following registry locations as applicable:
+- Clean Edge and Ondrive registry:
 ```
-HKLM\SOFTWARE\Microsoft\Edge
-HKLM\SOFTWARE\WOW6432Node\Microsoft\Edge
-HKLM\SOFTWARE\Microsoft\EdgeUpdate
-HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate
-HKLM\SOFTWARE\Policies\Microsoft\Edge
-HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate
-
-HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge
-HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge
-
 HKCR\Applications\msedge.exe
-HKCR\msedge
+HKCR\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}
 HKCR\microsoft-edge
 HKCR\microsoft-edge-holographic
+HKCR\msedge
 
+HKLM\SOFTWARE\Microsoft\Edge
+HKLM\SOFTWARE\Microsoft\EdgeUpdate
 HKLM\SOFTWARE\Microsoft\OneDrive
-HKLM\SOFTWARE\WOW6432Node\Microsoft\OneDrive
-
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge
+HKLM\SOFTWARE\Policies\Microsoft\Edge
+HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate
 HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive
-
-HKCU\Software\Microsoft\OneDrive
-HKCU\Environment\OneDrive
-HKCR\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}
+HKLM\SOFTWARE\WOW6432Node\Microsoft\Edge
+HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate
+HKLM\SOFTWARE\WOW6432Node\Microsoft\OneDrive
+HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge
 ```
 
-### Privacy and telemetry configuration
-
-#### Minimum telemetry and diagnostic data
+Registry optimization: 
+- Mimimum telemetry and diagnostic data:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v MaxTelemetryAllowed /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowDeviceNameInTelemetry /t REG_DWORD /d 0 /f
 ```
 
-#### Disable Advertising ID
+- Disable Advertising ID:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" /v DisabledByGroupPolicy /t REG_DWORD /d 1 /f
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f
 ```
 
-#### Block consumer features and sponsored apps
+- Block consumer features and sponsored apps:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v DisableWindowsConsumerFeatures /t REG_DWORD /d 1 /f
 ```
 
-#### Disable Cortana and web search
+- Disable Cortana:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v DisableWebSearch /t REG_DWORD /d 1 /f
@@ -450,33 +359,31 @@ reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v ConnectedSe
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowSearchToUseLocation /t REG_DWORD /d 0 /f
 ```
 
-#### Disable News and Interests
+- Disable news and interests:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" /v EnableFeeds /t REG_DWORD /d 0 /f
 ```
 
-#### Disable feedback notifications
+- Disable feedback notifications:
 ```
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" /v NumberOfSIUFInPeriod /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" /v PeriodInNanoSeconds /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v DoNotShowFeedbackNotifications /t REG_DWORD /d 1 /f
 ```
 
-#### Disable Activity History
+- Disable activity history:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v EnableActivityFeed /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v PublishUserActivities /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\System" /v UploadUserActivities /t REG_DWORD /d 0 /f
 ```
 
-#### Disable Location Services
+- Disable location services:
 ```
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" /v DisableLocation /t REG_DWORD /d 1 /f
 ```
 
-### Disable selected services
-
-The following list is based on a **manual review / BlackViper reference**. Keep only services that match your intended device scenarios. Items marked `**` are typically associated with optional/server-style functionality.
+Service optimization to disable following (refer to BlackViper):
 ```
 ActiveX Installer (AxInstSV)
 Application Layer Gateway Service
@@ -531,7 +438,7 @@ Work Folders **
 WWAN AutoConfig
 ```
 
-### Disable selected scheduled tasks
+Scheduled task to disable following:
 ```
 \Microsoft\Windows\Application Experience\MareBackup
 \Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser
@@ -567,45 +474,45 @@ WWAN AutoConfig
 \Microsoft\Windows\WwanSvc\OobeDiscovery
 ```
 
-## 15. CompactOS
+## CompactOS
 ```
 compact /CompactOs:always
 ```
 
-## 16. Sysprep
-> Run Sysprep only after the image has reached its intended final state.
+## Sysprep
+Do this after the image has settled into final state:
 ```
 %WINDIR%\System32\Sysprep\Sysprep.exe /generalize /oobe /shutdown
 ```
 
-# Stage 3 — Final Cleanup and Installation Media
+# Stage 3 - Cleanup and Make Installation Media
 
-## 17. Attach the VHDX
-Assign SYSTEM partition to V:
+## Attach Vhdx
+Assign SYSTEM partition to V:.
 
-## 18. Component Store Cleanup
-### Check component-store health and size
+## Components Clean
+Check WinSxS integrity and size:
 ```
 dism /Image:V: /Cleanup-Image /ScanHealth
 dism /Image:V: /Cleanup-Image /AnalyzeComponentStore
 ```
 
-### Clean superseded components
+Clean components:
 ```
 dism /Image:V: /Cleanup-Image /StartComponentCleanup /Resetbase
 ```
 
-### Clean and hide superseded service-pack files
+Clean and hide service pack:
 ```
 DISM /Image:V: /Cleanup-Image /SPSuperseded /HideSP
 ```
 
-### Re-check component-store size
+Check size again:
 ```
 dism /Image:V: /Cleanup-Image /AnalyzeComponentStore
 ```
 
-## 19. NTFS Compression Targets
+## NTFS Compression Directories
 ```
 V:\Windows\WinSxS
 V:\Windows\servicing\LCU
@@ -614,139 +521,92 @@ V:\Windows\Installer
 V:\Windows\SoftwareDistribution
 ```
 
-## 20. Remove Remaining Build Artifacts
-> **Important:** Remove the Audit-mode unattend file before capturing the final image.
+## Remove More Files
+(Important!) Remove audit mode directories:
 ```
-V:\Windows\Panther\Unattend\Unattend.xml
-V:\Windows\Panther\*.log
+V:\Windows\Panther
+V:\Windows\System32\Sysprep\Panther
+V:\Users\Administrator
 ```
 
-Remove WinSxS backup `V:\Windows\WinSxS\Backup`
+Remove WinSxS backup `V:\Windows\WinSxS\Backup`.
 
 
-### Remove runtime/build-cache files
+Remove redundant files generate during customization:
 ```
+V:\$Recycle.Bin
+V:\hiberfil.sys
+V:\pagefile.sys
+V:\ProgramData\Microsoft\Diagnosis
+V:\ProgramData\Microsoft\Search\Data
+V:\ProgramData\Microsoft\Windows\WER
+V:\swapfile.sys
+V:\Users\*\AppData\Local\Microsoft\Windows\Explorer\*cache*.db
+V:\Users\*\AppData\Local\Temp\*
+V:\Windows\CSC
+V:\Windows\DeliveryOptimization
+V:\Windows\Downloaded Program Files
+V:\Windows\LiveKernelReports
+V:\Windows\Logs
+V:\Windows\MEMORY.DMP
+V:\Windows\Minidump
+V:\Windows\Prefetch
+V:\Windows\ServiceProfiles\LocalService\AppData\Local\FontCache
+V:\Windows\SoftwareDistribution\DataStore
+V:\Windows\SoftwareDistribution\Download
+V:\Windows\System32\winevt\Logs\*
 V:\Windows\Temp\*
-V:\Windows\Logs\*
-V:\Windows\SoftwareDistribution\Download\*
-V:\Windows\SoftwareDistribution\DataStore\*
-V:\Windows\Downloaded Program Files\*
-%TEMP%\*
 ``` 
 
-## 21. Capture the Final WIM
-
-> **Order matters:** `/Optimize-Image /Boot` is intentionally the last DISM image operation before capture.
-
-### Optimize the image for boot performance
+## Capture Vhdx to Wimfile
+Optimize image:
 ```
 dism /Image:V: /Optimize-Image /Boot
 ```
 
-### Capture immediately after optimization
+Capture image, right after optimize:
 ```
-Dism /Capture-Image /ImageFile:%WORKDIR%\install_stage2.wim /CaptureDir:V: /Name:"Windows 10 Pro" /Description:"Windows 10 Pro 22H2 customized image - %IMAGEYEAR%" /Compress:max /CheckIntegrity
-```
-
-### Mount the captured WIM for final metadata/export preparation
-```
-dism /Mount-Wim /WimFile:%WORKDIR%\install_stage2.wim /Index:1 /MountDir:%MOUNTDIR%
+dism /Capture-Image /ImageFile:%WORKDIR%\output\install_%VERSION%.wim /CaptureDir:V: /Name:"Windows 10 Pro" /Description:"Windows 10 Pro %VERSION%" /Compress:max /CheckIntegrity
+dism /Get-WimInfo /WimFile:%WORKDIR%\output\install_%VERSION%.wim
 ```
 
-### Commit and unmount
+## Make Installation DVD
+Export ESD:
 ```
-dism /Unmount-Image /MountDir:%MOUNTDIR% /Commit
-```
-
-### Export the final `install.wim`
-```
-dism /Export-Image /SourceImageFile:%WORKDIR%\install_stage2.wim /SourceIndex:1 /DestinationImageFile:%OUTPUT%\install_oscurrent%IMAGEYEAR%.wim /Compress:max /CheckIntegrity
-dism /Get-WimInfo /WimFile:%OUTPUT%\install_oscurrent%IMAGEYEAR%.wim
+dism /Export-Image /SourceImageFile:%WORKDIR%\output\install_%VERSION%.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\output\install.esd /Compress:recovery /CheckIntegrity
 ```
 
-## 22. Build the Installation ISO
-### Export `install.esd`
+Remove all files in dvd. Extract `dvd_structure.zip` to dvd.
 
-> The ESD is intended for installation media; the maximum-compression WIM is retained separately for servicing/deployment workflows.
+Rename and copy `install.esd` or `install.wim` to `dvd\sources`.
 
+Make installation DVD:
 ```
-dism /Export-Image /SourceImageFile:%WORKDIR%\install_stage2.wim /SourceIndex:1 /DestinationImageFile:%WORKDIR%\install.esd /Compress:recovery /CheckIntegrity
-```
-
-Copy `install.esd` to `dvd\sources` and replace the existing `install.wim`.
-
-### Create the ISO
-```
-oscdimg -m -o -u2 -udfver102 -b%WORKDIR%\dvd\boot\etfsboot.com -e -bootdata:2#p0,e,b%WORKDIR%\dvd\boot\etfsboot.com#pEF,e,b%WORKDIR%\dvd\efi\microsoft\boot\efisys.bin %WORKDIR%\dvd\ %OUTPUT%\en_win10_22H2_custom_%IMAGEYEAR%.iso
+oscdimg -m -o -u2 -udfver102 -b%WORKDIR%\dvd\boot\etfsboot.com -e -bootdata:2#p0,e,b%WORKDIR%\dvd\boot\etfsboot.com#pEF,e,b%WORKDIR%\dvd\efi\microsoft\boot\efisys.bin %WORKDIR%\dvd\ %WORKDIR%\output\en_win10_%VERSION%.iso
 ```
 
-Detach the VHDX and clean the working directory.
+Unattach Vhdx and cleanup USERDIR.
 
-# Post-Installation
+# Post Stage - Post Installation
 
-## 23. Deploy and Register WinRE
+## Deploy WinRE
 ```
 xcopy /h C:\Windows\System32\Recovery\Winre.wim C:\Recovery\WindowsRE
 C:\Windows\System32\Reagentc /setreimage /path C:\Recovery\WindowsRE /target C:\Windows
 reagentc /info
 ```
 
-## 24. Windows Update Policy
-Apply the Windows Update policy **after all intended servicing and validation are complete**.
+## Disable Windows Update after all settled
+Use Group Policy to disable:
 ```
 Computer Configuration\Administrative Templates\Windows Components\Windows Update\Configure Automatic Updates
 Computer Configuration\Administrative Templates\Windows Components\Windows Update\Manage end user experience
 ```
 
-### Optional service-level restrictions
+Optional disable service to save resources:
 ```
 Windows Update
 Background Intelligent Transfer Service
 Update Orchestrator Service for Windows Update
 Windows Update Medic Service (may reject as is protected)
 ```
-
----
-
-## ✅ Final Validation Checklist
-
-Before publishing or deploying a yearly image:
-
-- [ ] Confirm the intended Windows 10 22H2 edition/index.
-- [ ] Verify WIM integrity before and after major export operations.
-- [ ] Confirm Chinese input and Microsoft Pinyin work while the UI remains English.
-- [ ] Confirm WinRE boots and can display Simplified Chinese text.
-- [ ] Verify networking and integrated Intel Wi-Fi drivers.
-- [ ] Verify removed AppX packages, capabilities, features, and services against the intended hardware/use case.
-- [ ] Verify Edge WebView2 remains available if required by installed applications.
-- [ ] Confirm Reserved Storage state.
-- [ ] Confirm Sysprep completed successfully.
-- [ ] Run component-store health/size checks after final cleanup.
-- [ ] Verify the final `install.wim`, `install.esd`, and ISO.
-- [ ] Install the ISO in a VM and complete an end-to-end OOBE/first-login test before physical deployment.
-
-## 📅 Annual Image Refresh
-
-This workflow is maintained as a **yearly Windows 10 image refresh**. Update the `IMAGEYEAR` variable and output filenames when creating the next reference image.
-
-The current release convention is:
-
-```text
-Windows 10 22H2
-Reference year: 2026
-```
-
----
-
-### References
-
-- [Microsoft — Features on Demand](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/features-on-demand-v2--capabilities)
-- [Microsoft — Language Features on Demand](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/features-on-demand-language-fod)
-- [Microsoft — Customize Windows RE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/customize-windows-re)
-- [Microsoft — Windows 10 lifecycle / ESU](https://learn.microsoft.com/en-us/windows/release-health/windows-message-center)
-- [UUP dump — Windows 10 22H2](https://uupdump.net/known.php?q=category:w10-22h2)
-- [Intel — Wi-Fi 6E AX210 Downloads](https://www.intel.com/content/www/us/en/products/sku/204836/intel-wifi-6e-ax210-gig/downloads.html)
-
----
-
-> **Project note:** This is a personal build log and reference workflow. Keep a known-good source image and validate every yearly revision before relying on it.
